@@ -802,7 +802,6 @@ class EdifactValidator
     public static function validateMessageStructure(array $segments): bool
     {
         if (empty($segments)) {
-            error_log("Empty segment list");
             return false;
         }
         
@@ -810,12 +809,10 @@ class EdifactValidator
         $lastSegment = $segments[count($segments) - 1];
         
         if (!(strpos($firstSegment, "UNA") === 0 || strpos($firstSegment, "UNB") === 0)) {
-            error_log("Invalid first segment: " . substr($firstSegment, 0, 20));
             return false;
         }
         
         if (!(strpos($lastSegment, "UNT") === 0 || strpos($lastSegment, "UNZ") === 0)) {
-            error_log("Invalid last segment: " . substr($lastSegment, 0, 20));
             return false;
         }
         
@@ -827,12 +824,7 @@ class EdifactValidator
             if (strpos($segment, "UNT+") === 0) $untCount++;
         }
         
-        if ($unhCount !== $untCount) {
-            error_log("UNH/UNT mismatch: UNH={$unhCount}, UNT={$untCount}");
-            return false;
-        }
-        
-        return true;
+        return $unhCount === $untCount;
     }
 }
 
@@ -1279,41 +1271,64 @@ class EdifactGenerator
             throw new EdifactGeneratorException("Failed to open file for writing", "IO_004");
         }
         
+        $allSegments = [];
+        
         try {
-            $builder = new SegmentBuilder($config);
-            
             if ($config->includeUna) {
-                fwrite($handle, SegmentGenerator::una($config) . $config->lineEnding);
+                $segment = SegmentGenerator::una($config);
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
             }
             
-            fwrite($handle, SegmentGenerator::unb($config, $validatedData->messageRef) . $config->lineEnding);
-            fwrite($handle, SegmentGenerator::unh($validatedData->messageRef, $config) . $config->lineEnding);
-            fwrite($handle, SegmentGenerator::bgm($validatedData->orderNumber, "220", $config) . $config->lineEnding);
-            fwrite($handle, SegmentGenerator::dtm(EdifactConfig::DTM_QUALIFIER_ORDER_DATE, $validatedData->orderDate, $config->dateFormat, $config) . $config->lineEnding);
+            $segment = SegmentGenerator::unb($config, $validatedData->messageRef);
+            fwrite($handle, $segment . $config->lineEnding);
+            $allSegments[] = $segment;
+            
+            $segment = SegmentGenerator::unh($validatedData->messageRef, $config);
+            fwrite($handle, $segment . $config->lineEnding);
+            $allSegments[] = $segment;
+            
+            $segment = SegmentGenerator::bgm($validatedData->orderNumber, "220", $config);
+            fwrite($handle, $segment . $config->lineEnding);
+            $allSegments[] = $segment;
+            
+            $segment = SegmentGenerator::dtm(EdifactConfig::DTM_QUALIFIER_ORDER_DATE, $validatedData->orderDate, $config->dateFormat, $config);
+            fwrite($handle, $segment . $config->lineEnding);
+            $allSegments[] = $segment;
             
             if ($validatedData->deliveryDate !== null) {
-                fwrite($handle, SegmentGenerator::dtm(EdifactConfig::DTM_QUALIFIER_DELIVERY_DATE, $validatedData->deliveryDate, $config->dateFormat, $config) . $config->lineEnding);
+                $segment = SegmentGenerator::dtm(EdifactConfig::DTM_QUALIFIER_DELIVERY_DATE, $validatedData->deliveryDate, $config->dateFormat, $config);
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
             }
             
             if ($validatedData->currency !== null) {
-                fwrite($handle, SegmentGenerator::cux($validatedData->currency, $config) . $config->lineEnding);
+                $segment = SegmentGenerator::cux($validatedData->currency, $config);
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
             }
             
             foreach ($validatedData->parties as $party) {
-                fwrite($handle, SegmentGenerator::nad(
+                $segment = SegmentGenerator::nad(
                     $party->qualifier,
                     $party->id,
                     $party->name,
                     $config
-                ) . $config->lineEnding);
+                );
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
                 
                 if ($party->address !== null) {
-                    fwrite($handle, SegmentGenerator::com($party->address, EdifactConfig::CONTACT_TYPE_ADDRESS, $config) . $config->lineEnding);
+                    $segment = SegmentGenerator::com($party->address, EdifactConfig::CONTACT_TYPE_ADDRESS, $config);
+                    fwrite($handle, $segment . $config->lineEnding);
+                    $allSegments[] = $segment;
                 }
                 
                 if ($party->contact !== null) {
                     $contactType = $party->contactType ?? EdifactConfig::CONTACT_TYPE_TELEPHONE;
-                    fwrite($handle, SegmentGenerator::com($party->contact, $contactType, $config) . $config->lineEnding);
+                    $segment = SegmentGenerator::com($party->contact, $contactType, $config);
+                    fwrite($handle, $segment . $config->lineEnding);
+                    $allSegments[] = $segment;
                 }
             }
             
@@ -1328,14 +1343,23 @@ class EdifactGenerator
                 $lineTotal = DecimalHelper::multiply($price, $quantity, $scale);
                 $lineTotalRounded = DecimalHelper::roundDecimal($lineTotal, $config->decimalRounding);
                 
-                fwrite($handle, SegmentGenerator::lin($idx + 1, $item->productCode, $config) . $config->lineEnding);
+                $segment = SegmentGenerator::lin($idx + 1, $item->productCode, $config);
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
                 
                 if ($item->description !== '') {
-                    fwrite($handle, SegmentGenerator::imd($item->description, $config) . $config->lineEnding);
+                    $segment = SegmentGenerator::imd($item->description, $config);
+                    fwrite($handle, $segment . $config->lineEnding);
+                    $allSegments[] = $segment;
                 }
                 
-                fwrite($handle, SegmentGenerator::qty($quantity, $unit, $config) . $config->lineEnding);
-                fwrite($handle, SegmentGenerator::pri($price, $config, $unit) . $config->lineEnding);
+                $segment = SegmentGenerator::qty($quantity, $unit, $config);
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
+                
+                $segment = SegmentGenerator::pri($price, $config, $unit);
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
                 
                 $totalAmount = DecimalHelper::add($totalAmount, $lineTotalRounded, $scale);
             }
@@ -1350,22 +1374,33 @@ class EdifactGenerator
                 
                 $taxAmountRounded = DecimalHelper::roundDecimal($taxAmount, $config->decimalRounding);
                 
-                fwrite($handle, SegmentGenerator::tax($taxRate, "VAT", $config) . $config->lineEnding);
-                fwrite($handle, SegmentGenerator::moa(EdifactConfig::MOA_TAX_TOTAL, $taxAmountRounded, $config) . $config->lineEnding);
+                $segment = SegmentGenerator::tax($taxRate, "VAT", $config);
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
+                
+                $segment = SegmentGenerator::moa(EdifactConfig::MOA_TAX_TOTAL, $taxAmountRounded, $config);
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
                 
                 $totalAmount = DecimalHelper::add($totalAmount, $taxAmountRounded, $scale);
             }
             
             if ($validatedData->deliveryLocation !== null) {
-                fwrite($handle, SegmentGenerator::loc("11", $validatedData->deliveryLocation, $config) . $config->lineEnding);
+                $segment = SegmentGenerator::loc("11", $validatedData->deliveryLocation, $config);
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
             }
             
             if ($validatedData->paymentTerms !== null) {
-                fwrite($handle, SegmentGenerator::pai($validatedData->paymentTerms, $config) . $config->lineEnding);
+                $segment = SegmentGenerator::pai($validatedData->paymentTerms, $config);
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
             }
             
             if ($validatedData->incoterms !== null) {
-                fwrite($handle, SegmentGenerator::tod($validatedData->incoterms, $config) . $config->lineEnding);
+                $segment = SegmentGenerator::tod($validatedData->incoterms, $config);
+                fwrite($handle, $segment . $config->lineEnding);
+                $allSegments[] = $segment;
             }
             
             if ($validatedData->specialInstructions !== null) {
@@ -1373,15 +1408,18 @@ class EdifactGenerator
                 $chunks = str_split($instructions, $config->maxFieldLength);
                 
                 foreach ($chunks as $i => $chunk) {
-                    fwrite($handle, SegmentGenerator::ftx($chunk, "AAI", $i + 1, $config) . $config->lineEnding);
+                    $segment = SegmentGenerator::ftx($chunk, "AAI", $i + 1, $config);
+                    fwrite($handle, $segment . $config->lineEnding);
+                    $allSegments[] = $segment;
                 }
             }
             
-            fwrite($handle, SegmentGenerator::moa(EdifactConfig::MOA_LINE_TOTAL, $totalAmount, $config) . $config->lineEnding);
+            $segment = SegmentGenerator::moa(EdifactConfig::MOA_LINE_TOTAL, $totalAmount, $config);
+            fwrite($handle, $segment . $config->lineEnding);
+            $allSegments[] = $segment;
             
             $unhIndex = null;
-            $segments = explode($config->lineEnding, stream_get_contents($handle, -1, 0) ?: "");
-            foreach ($segments as $i => $segment) {
+            foreach ($allSegments as $i => $segment) {
                 if (strpos($segment, "UNH+") === 0) {
                     $unhIndex = $i;
                     break;
@@ -1392,10 +1430,14 @@ class EdifactGenerator
                 throw new EdifactGeneratorException("UNH segment missing", "GEN_001");
             }
             
-            $segmentCount = count($segments) - $unhIndex;
+            $segmentCount = count($allSegments) - $unhIndex;
             
-            fwrite($handle, SegmentGenerator::unt($segmentCount, $validatedData->messageRef, $config) . $config->lineEnding);
-            fwrite($handle, SegmentGenerator::unz(1, $validatedData->messageRef, $config) . $config->lineEnding);
+            $segment = SegmentGenerator::unt($segmentCount, $validatedData->messageRef, $config);
+            fwrite($handle, $segment . $config->lineEnding);
+            $allSegments[] = $segment;
+            
+            $segment = SegmentGenerator::unz(1, $validatedData->messageRef, $config);
+            fwrite($handle, $segment . $config->lineEnding);
             
             error_log("Streaming generation completed: {$outputFile}");
         } finally {
